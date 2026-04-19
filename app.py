@@ -6,7 +6,7 @@ import concurrent.futures
 from datetime import datetime, timedelta
 import pandas as pd
 
-st.set_page_config(page_title="Ultra Sniper v8 - Today's Live", layout="wide")
+st.set_page_config(page_title="Ultra Sniper v8 - Today's Live Support me vfcash 01098137253 ", layout="wide")
 
 st.title("🎯 Sniper Elite V8: Today's Fresh Servers")
 st.markdown(f"### فحص مباشر لسيرفرات اليوم: {datetime.now().strftime('%Y-%m-%d')}")
