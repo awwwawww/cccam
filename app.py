@@ -44,27 +44,36 @@ def fetch_from_sources():
         return
 
     all_raw = set()
-    today_str = datetime.now().strftime('%Y-%m-%d')
-    yesterday_str = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+    today = datetime.now()
 
-    # 1. جلب بيانات من Testious (تحديث التاريخ تلقائياً)
-    try:
-        testious_url = f"https://testious.com/old-free-cccam-servers/{today_str}/"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(testious_url, headers=headers, timeout=10)
-        if response.status_code == 200:
-            # استخراج السيرفرات من الصفحة باستخدام Regex
-            matches = re.findall(r'([CN]:)\s*([^\s#]+)\s+(\d+)\s+([^\s#]+)\s+([^\s#]+)', response.text)
-            for m in matches:
-                all_raw.add((m[0], m[1], m[2], m[3], m[4], ""))
-    except:
-        st.warning("تعذر جلب بيانات من Testious حالياً.")
+    # 1. جلب بيانات من Testious (آخر 10 أيام واليوم)
+    st.info("🌐 جاري سحب البيانات من Testious لآخر 10 أيام...")
+    for i in range(10):
+        target_date = (today - timedelta(days=i)).strftime('%Y-%m-%d')
+        try:
+            testious_url = f"https://testious.com/old-free-cccam-servers/{target_date}/"
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+            response = requests.get(testious_url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                matches = re.findall(r'([CN]:)\s*([^\s#]+)\s+(\d+)\s+([^\s#]+)\s+([^\s#]+)', response.text)
+                for m in matches:
+                    all_raw.add((m[0], m[1], m[2], m[3], m[4], ""))
+        except:
+            continue
 
-    # 2. جلب بيانات من GitHub (آخر 24 ساعة فقط)
-    gh_headers = {"Authorization": f"token {token}"}
+    # 2. جلب بيانات من GitHub (آخر 48 ساعة بدقة)
+    st.info("🐙 جاري البحث في GitHub عن سيرفرات آخر 48 ساعة...")
+    gh_headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    
+    # حساب تاريخ ووقت قبل 48 ساعة بصيغة ISO التي يقبلها جيت هاب
+    forty_eight_hours_ago = (today - timedelta(hours=48)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    
     queries = [
-        f'C: "{today_str}"', f'N: "{today_str}"',
-        f'C: created:>{yesterday_str}',
+        f'C: created:>={forty_eight_hours_ago}', 
+        f'N: created:>={forty_eight_hours_ago}',
         'filename:CCcam.cfg sort:indexed-desc'
     ]
 
@@ -72,22 +81,52 @@ def fetch_from_sources():
         try:
             r = requests.get(f"https://api.github.com/search/code?q={q}&sort=indexed&order=desc", headers=gh_headers)
             if r.status_code == 200:
-                for item in r.json().get('items', [])[:30]:
+                for item in r.json().get('items', [])[:40]: # زيادة العدد لضمان جلب أكبر قدر
                     raw_url = item['html_url'].replace("github.com", "raw.githubusercontent.com").replace("/blob/", "/")
-                    content = requests.get(raw_url, timeout=5).text
-                    # استخراج سيسكام ونيوكامد مع ديسكي
-                    c_matches = re.findall(r'(C:)\s*([^\s#]+)\s+(\d+)\s+([^\s#]+)\s+([^\s#]+)', content)
-                    n_matches = re.findall(r'(N:)\s*([^\s#]+)\s+(\d+)\s+([^\s#]+)\s+([^\s#]+)\s+([0-9a-fA-F ]{20,})', content)
-                    for m in c_matches: all_raw.add((m[0], m[1], m[2], m[3], m[4], ""))
-                    for m in n_matches: all_raw.add(m)
+                    try:
+                        content = requests.get(raw_url, timeout=5).text
+                        c_matches = re.findall(r'(C:)\s*([^\s#]+)\s+(\d+)\s+([^\s#]+)\s+([^\s#]+)', content)
+                        n_matches = re.findall(r'(N:)\s*([^\s#]+)\s+(\d+)\s+([^\s#]+)\s+([^\s#]+)\s+([0-9a-fA-F ]{20,})', content)
+                        for m in c_matches: all_raw.add((m[0], m[1], m[2], m[3], m[4], ""))
+                        for m in n_matches: all_raw.add(m)
+                    except: continue
         except: continue
 
+    # 3. جلب من مواقع ومنتديات أخرى (مواقع عامة ومواقع اللصق)
+    st.info("🌍 جاري فحص مصادر ومنتديات إضافية...")
+    extra_urls = [
+        "https://pastebin.com/archive", # مثال عام
+        # يمكنك إضافة روابط المنتديات هنا مباشرة
+    ]
+    for url in extra_urls:
+        try:
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            response = requests.get(url, headers=headers, timeout=5)
+            if response.status_code == 200:
+                c_matches = re.findall(r'(C:)\s*([^\s#]+)\s+(\d+)\s+([^\s#]+)\s+([^\s#]+)', response.text)
+                for m in c_matches: all_raw.add((m[0], m[1], m[2], m[3], m[4], ""))
+        except:
+            continue
+
     # الفحص المباشر
-    st.info(f"🔎 تم تجميع {len(all_raw)} سيرفر.. جاري تصفية الشغال منها فقط...")
+    if not all_raw:
+        st.warning("لم يتم العثور على سيرفرات في المصادر، يرجى التأكد من التوكن واتصال الإنترنت.")
+        return
+
+    st.info(f"🔎 تم تجميع {len(all_raw)} سيرفر فريد.. جاري تصفية الشغال منها فقط...")
     active_results = []
+    
+    # استخدام Progress Bar لمعرفة تقدم الفحص
+    progress_bar = st.progress(0)
+    total = len(all_raw)
+    
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        results = list(executor.map(check_live, all_raw))
-        active_results = [r for r in results if r is not None]
+        futures = {executor.submit(check_live, server): server for server in all_raw}
+        for i, future in enumerate(concurrent.futures.as_completed(futures)):
+            result = future.result()
+            if result:
+                active_results.append(result)
+            progress_bar.progress((i + 1) / total)
     
     st.session_state.servers = active_results
 
@@ -108,6 +147,7 @@ if st.session_state.servers:
     all_lines = "\n".join([s['Full Line'] for s in st.session_state.servers])
     st.text_area("", value=all_lines, height=400)
     
+    today_str = datetime.now().strftime('%Y-%m-%d')
     st.download_button("📥 تحميل كملف .txt", all_lines, file_name=f"servers_{today_str}.txt")
 else:
     st.info("اضغط على الزر بالأعلى لبدء الصيد..")
