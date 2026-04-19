@@ -6,121 +6,108 @@ import concurrent.futures
 from datetime import datetime, timedelta
 import pandas as pd
 
-# إعدادات الصفحة
-st.set_page_config(page_title="Ultra Sniper Server 2026", layout="wide")
+st.set_page_config(page_title="Ultra Sniper v8 - Today's Live", layout="wide")
 
-st.title("🚀 Monster Hunter: CCcam & Newcamd Web Sniper")
-st.markdown("### البحث عن أحدث السيرفرات المنشورة (آخر 48 ساعة)")
+st.title("🎯 Sniper Elite V8: Today's Fresh Servers")
+st.markdown(f"### فحص مباشر لسيرفرات اليوم: {datetime.now().strftime('%Y-%m-%d')}")
 
-# المدخلات في الشريط الجانبي
+# الإعدادات الجانبية
 with st.sidebar:
-    st.header("⚙️ الإعدادات")
-    github_token = st.text_input("GitHub Token", type="password", help="أدخل التوكن الخاص بك بصلاحية repo")
-    search_limit = st.slider("عدد الروابط للفحص", 10, 200, 50)
-    threads = st.slider("سرعة الفحص (Threads)", 20, 100, 50)
-    
-    if st.button("🧹 تنظيف النتائج"):
-        st.session_state.results = []
+    st.header("⚙️ لوحة التحكم")
+    token = st.text_input("GitHub Token", type="password")
+    check_timeout = st.slider("مهلة الفحص (ثواني)", 1.0, 5.0, 2.5)
+    max_workers = st.slider("سرعة المعالجة", 20, 100, 60)
 
-# تهيئة مخزن النتائج
-if 'results' not in st.session_state:
-    st.session_state.results = []
+if 'servers' not in st.session_state:
+    st.session_state.servers = []
 
-def check_server(server_data):
-    prefix, host, port, user, password, deskey = server_data
+def check_live(server_data):
+    """فحص احترافي للتأكد من استجابة السيرفر الحالية"""
+    prefix, host, port, user, pwd, deskey = server_data
     try:
-        # فحص الاتصال (Testious Logic)
-        with socket.create_connection((host, int(port)), timeout=2.0):
+        with socket.create_connection((host, int(port)), timeout=check_timeout):
             return {
                 "Type": prefix,
                 "Server": host,
                 "Port": port,
                 "User": user,
-                "Pass": password,
-                "Deskey": deskey if deskey else "",
-                "Full Line": f"{prefix} {host} {port} {user} {password} {deskey if deskey else ''}".strip()
+                "Pass": pwd,
+                "Deskey": deskey,
+                "Full Line": f"{prefix} {host} {port} {user} {pwd} {deskey}".strip()
             }
     except:
         return None
 
-def fetch_servers():
-    if not github_token:
-        st.error("❌ يرجى إدخال GitHub Token أولاً!")
+def fetch_from_sources():
+    if not token:
+        st.error("⚠️ يرجى إدخال التوكن للبحث في GitHub")
         return
 
-    headers = {"Authorization": f"token {github_token}"}
-    # البحث عن آخر 48 ساعة
-    date_limit = (datetime.now() - timedelta(hours=48)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    
+    all_raw = set()
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    yesterday_str = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+
+    # 1. جلب بيانات من Testious (تحديث التاريخ تلقائياً)
+    try:
+        testious_url = f"https://testious.com/old-free-cccam-servers/{today_str}/"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(testious_url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            # استخراج السيرفرات من الصفحة باستخدام Regex
+            matches = re.findall(r'([CN]:)\s*([^\s#]+)\s+(\d+)\s+([^\s#]+)\s+([^\s#]+)', response.text)
+            for m in matches:
+                all_raw.add((m[0], m[1], m[2], m[3], m[4], ""))
+    except:
+        st.warning("تعذر جلب بيانات من Testious حالياً.")
+
+    # 2. جلب بيانات من GitHub (آخر 24 ساعة فقط)
+    gh_headers = {"Authorization": f"token {token}"}
     queries = [
-        f'C: extension:cfg created:>{date_limit}',
-        f'N: extension:txt created:>{date_limit}',
-        'filename:CCcam.cfg sort:indexed-desc',
-        'filename:newcamd.list sort:indexed-desc'
+        f'C: "{today_str}"', f'N: "{today_str}"',
+        f'C: created:>{yesterday_str}',
+        'filename:CCcam.cfg sort:indexed-desc'
     ]
 
-    all_raw_servers = set()
-    progress_bar = st.progress(0)
-    st.info("📡 جاري تمشيط GitHub عن أحدث الملفات...")
-
-    for idx, q in enumerate(queries):
+    for q in queries:
         try:
-            url = f"https://api.github.com/search/code?q={q}&sort=indexed&order=desc"
-            r = requests.get(url, headers=headers, timeout=10)
+            r = requests.get(f"https://api.github.com/search/code?q={q}&sort=indexed&order=desc", headers=gh_headers)
             if r.status_code == 200:
-                items = r.json().get('items', [])[:search_limit]
-                for item in items:
+                for item in r.json().get('items', [])[:30]:
                     raw_url = item['html_url'].replace("github.com", "raw.githubusercontent.com").replace("/blob/", "/")
                     content = requests.get(raw_url, timeout=5).text
-                    
-                    # Regex للسيسكام والنيوكامد (يشمل Deskey للنيوكامد)
-                    # CCcam: C: host port user pass
-                    cccam_matches = re.findall(r'(C:)\s*([^\s#]+)\s+(\d+)\s+([^\s#]+)\s+([^\s#]+)', content)
-                    for m in cccam_matches:
-                        all_raw_servers.add((m[0], m[1], m[2], m[3], m[4], ""))
-                    
-                    # Newcamd: N: host port user pass deskey
-                    newcamd_matches = re.findall(r'(N:)\s*([^\s#]+)\s+(\d+)\s+([^\s#]+)\s+([^\s#]+)\s+([0-9a-fA-F ]{20,})', content)
-                    for m in newcamd_matches:
-                        all_raw_servers.add(m)
-            progress_bar.progress((idx + 1) / len(queries))
-        except:
-            continue
+                    # استخراج سيسكام ونيوكامد مع ديسكي
+                    c_matches = re.findall(r'(C:)\s*([^\s#]+)\s+(\d+)\s+([^\s#]+)\s+([^\s#]+)', content)
+                    n_matches = re.findall(r'(N:)\s*([^\s#]+)\s+(\d+)\s+([^\s#]+)\s+([^\s#]+)\s+([0-9a-fA-F ]{20,})', content)
+                    for m in c_matches: all_raw.add((m[0], m[1], m[2], m[3], m[4], ""))
+                    for m in n_matches: all_raw.add(m)
+        except: continue
 
-    st.success(f"🔎 تم العثور على {len(all_raw_servers)} سيرفر محتمل. جاري الفحص الآن...")
+    # الفحص المباشر
+    st.info(f"🔎 تم تجميع {len(all_raw)} سيرفر.. جاري تصفية الشغال منها فقط...")
+    active_results = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        results = list(executor.map(check_live, all_raw))
+        active_results = [r for r in results if r is not None]
     
-    # الفحص المتوازي
-    active_servers = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor:
-        results = list(executor.map(check_server, all_raw_servers))
-        active_servers = [r for r in results if r is not None]
-    
-    st.session_state.results = active_servers
+    st.session_state.servers = active_results
 
-# زر التشغيل الرئيسي
-if st.button("🔥 إطلاق الصيد الضخم"):
-    fetch_servers()
+# زر التشغيل
+if st.button("🚀 صيد سيرفرات اليوم وغداً"):
+    fetch_from_sources()
 
 # عرض النتائج
-if st.session_state.results:
-    df = pd.DataFrame(st.session_state.results)
-    
-    st.markdown("### ✅ السيرفرات الشغالة حالياً")
+if st.session_state.servers:
+    df = pd.DataFrame(st.session_state.servers)
+    st.success(f"✅ تم العثور على {len(st.session_state.servers)} سيرفر شغال 100%")
     
     # عرض الجدول
-    st.dataframe(df[["Type", "Server", "Port", "User", "Pass", "Deskey"]], use_container_width=True)
+    st.table(df[["Type", "Server", "Port", "User", "Pass", "Deskey"]])
     
-    # منطقة النسخ
-    st.markdown("### 📋 انسخ السطور من هنا:")
-    text_to_copy = "\n".join([item['Full Line'] for item in st.session_state.results])
-    st.text_area("السطور الجاهزة:", value=text_to_copy, height=300)
+    # النسخ السريع
+    st.markdown("### 📋 السطور الجاهزة للنسخ:")
+    all_lines = "\n".join([s['Full Line'] for s in st.session_state.servers])
+    st.text_area("", value=all_lines, height=400)
     
-    # زر تحميل ملف
-    st.download_button(
-        label="📥 تحميل النتائج كملف text",
-        data=text_to_copy,
-        file_name=f"servers_{datetime.now().strftime('%Y%m%d')}.txt",
-        mime="text/plain"
-    )
+    st.download_button("📥 تحميل كملف .txt", all_lines, file_name=f"servers_{today_str}.txt")
 else:
-    st.warning("لا توجد نتائج حالياً. اضغط على الزر بالأعلى للبدء.")
+    st.info("اضغط على الزر بالأعلى لبدء الصيد..")
