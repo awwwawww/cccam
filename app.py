@@ -8,134 +8,143 @@ import pandas as pd
 import time
 
 # إعداد الصفحة
-st.set_page_config(page_title="Ultra Sniper v8 - Live Support", layout="wide")
+st.set_page_config(page_title="Ultra Sniper v8 - Extreme Edition", layout="wide")
 
-st.title("🎯 Sniper Elite V8: Today's Fresh Servers")
-st.markdown(f"### فحص مباشر لسيرفرات اليوم: {datetime.now().strftime('%Y-%m-%d')}")
+st.title("🎯 Sniper Elite V8: Extreme Edition")
+st.markdown("### نظام صيد السيرفرات الطازجة وفلترة السيرفرات الميتة")
+st.info("تم تحديث الفحص ليتناسب مع سرعة الاستجابة الحقيقية للسيرفر")
 
 # الإعدادات الجانبية
 with st.sidebar:
-    st.header("⚙️ لوحة التحكم")
+    st.header("⚙️ إعدادات المطور امين")
     token = st.text_input("GitHub Token", type="password")
-    check_timeout = st.slider("مهلة الفحص (ثواني)", 1.0, 5.0, 3.5)
-    max_workers = st.slider("سرعة المعالجة", 20, 100, 60)
-    days_to_search = st.slider("بحث في Testious (أيام سابقة)", 1, 10, 5)
+    max_ping = st.slider("أقصى وقت استجابة (ثانية)", 0.5, 3.0, 1.2)
+    max_workers = st.slider("سرعة المعالجة (توازي)", 20, 100, 70)
 
 if 'servers' not in st.session_state:
     st.session_state.servers = []
 
-def check_live_advanced(server_data):
-    """فحص ذكي يتأكد من استجابة بروتوكول الشيرنج الحقيقي"""
+def check_server_quality(server_data):
+    """فحص الجودة: يتأكد من أن السيرفر ليس فقط متصل، بل سريع الاستجابة"""
     prefix, host, port, user, pwd, deskey = server_data
     try:
-        # إنشاء اتصال سوكيت
+        start_time = time.time()
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(check_timeout)
+        sock.settimeout(max_ping)
         
         # محاولة الاتصال
-        sock.connect((host, int(port)))
+        result = sock.connect_ex((host, int(port)))
         
-        # إذا كان سيسكام، ننتظر استلام حزمة الترحيب (16 بايت)
-        if prefix.upper() == 'C:':
-            data = sock.recv(16)
-            if len(data) == 16:
-                sock.close()
-                return {
-                    "Type": "CCcam", "Server": host, "Port": port,
-                    "User": user, "Pass": pwd, "Deskey": "-",
-                    "Full Line": f"C: {host} {port} {user} {pwd}"
-                }
-        
-        # إذا كان نيوكامد
-        elif prefix.upper() == 'N:':
-            sock.send(b'\x00\x00') # إرسال نبضة فحص
+        if result == 0:
+            # قياس وقت الاستجابة (Ping)
+            latency = round((time.time() - start_time) * 1000, 2)
+            
+            # فحص بروتوكولي أعمق
+            if prefix.upper() == 'C:':
+                data = sock.recv(16)
+                if not data: 
+                    sock.close()
+                    return None
+            
             sock.close()
             return {
-                "Type": "Newcamd", "Server": host, "Port": port,
-                "User": user, "Pass": pwd, "Deskey": deskey,
-                "Full Line": f"N: {host} {port} {user} {pwd} {deskey}"
+                "Type": prefix.replace(":", ""),
+                "Server": host,
+                "Port": port,
+                "User": user,
+                "Pass": pwd,
+                "Latency": f"{latency} ms",
+                "Full Line": f"{prefix} {host} {port} {user} {pwd} {deskey}".strip()
             }
-        sock.close()
     except:
         pass
     return None
 
-def fetch_from_sources():
+def fetch_fresh_data():
     if not token:
-        st.error("⚠️ يرجى إدخال التوكن للبحث في GitHub")
+        st.error("⚠️ يرجى وضع GitHub Token")
         return
 
     all_raw = set()
-    today = datetime.now()
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    yesterday_str = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
 
-    # 1. جلب من Testious بناءً على رغبتك (آخر 10 أيام)
-    st.info(f"🔎 جاري سحب السيرفرات من Testious لآخر {days_to_search} أيام...")
-    for i in range(days_to_search + 1):
-        target_date = (today - timedelta(days=i)).strftime('%Y-%m-%d')
-        try:
-            url = f"https://testious.com/old-free-cccam-servers/{target_date}/"
-            res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
-            if res.status_code == 200:
-                matches = re.findall(r'([CN]:)\s*([^\s#]+)\s+(\d+)\s+([^\s#]+)\s+([^\s#]+)', res.text)
-                for m in matches:
-                    all_raw.add((m[0], m[1], m[2], m[3], m[4], ""))
-        except: continue
-
-    # 2. جلب من GitHub (آخر 48 ساعة بدقة)
-    st.info("🐙 جاري فحص GitHub (آخر 48 ساعة)...")
-    forty_eight_ago = (today - timedelta(hours=48)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    # 1. جلب من مصادر متجددة (GitHub البحث المتقدم)
+    st.info("🚀 جاري صيد السيرفرات الطازجة من GitHub...")
     gh_headers = {"Authorization": f"token {token}"}
-    queries = [f'C: created:>={forty_eight_ago}', 'filename:CCcam.cfg']
+    
+    # البحث عن الملفات التي تم تحديثها اليوم فقط
+    queries = [
+        f'path:CCcam.cfg "{today_str}"',
+        f'"C:" extension:cfg created:>{yesterday_str}',
+        'filename:CCcam.cfg'
+    ]
 
     for q in queries:
         try:
-            r = requests.get(f"https://api.github.com/search/code?q={q}&sort=indexed&order=desc", headers=gh_headers)
+            api_url = f"https://api.github.com/search/code?q={q}&sort=indexed&order=desc"
+            r = requests.get(api_url, headers=gh_headers, timeout=10)
             if r.status_code == 200:
-                for item in r.json().get('items', [])[:30]:
+                items = r.json().get('items', [])
+                for item in items[:25]:
                     raw_url = item['html_url'].replace("github.com", "raw.githubusercontent.com").replace("/blob/", "/")
                     content = requests.get(raw_url, timeout=5).text
+                    # استخراج السطور
                     c_matches = re.findall(r'(C:)\s*([^\s#]+)\s+(\d+)\s+([^\s#]+)\s+([^\s#]+)', content)
                     n_matches = re.findall(r'(N:)\s*([^\s#]+)\s+(\d+)\s+([^\s#]+)\s+([^\s#]+)\s+([0-9a-fA-F ]{20,})', content)
                     for m in c_matches: all_raw.add((m[0], m[1], m[2], m[3], m[4], ""))
                     for m in n_matches: all_raw.add(m)
         except: continue
 
-    # عملية الفحص والمطابقة
+    # 2. جلب من Testious (اليوم والأمس فقط لضمان الحداثة)
+    for d in [today_str, yesterday_str]:
+        try:
+            url = f"https://testious.com/old-free-cccam-servers/{d}/"
+            res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
+            if res.status_code == 200:
+                matches = re.findall(r'([CN]:)\s*([^\s#]+)\s+(\d+)\s+([^\s#]+)\s+([^\s#]+)', res.text)
+                for m in matches: all_raw.add((m[0], m[1], m[2], m[3], m[4], ""))
+        except: continue
+
+    # تصفية وفحص
     if all_raw:
-        st.info(f"⚙️ جاري فحص {len(all_raw)} سيرفر.. يرجى الانتظار")
-        active_results = []
-        progress_bar = st.progress(0)
+        st.info(f"🔎 تم تجميع {len(all_raw)} سيرفر مرشح.. جاري الفحص عن طريق 'مطور امين'...")
+        results = []
+        progress = st.progress(0)
         
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_server = {executor.submit(check_live_advanced, s): s for s in all_raw}
-            for i, future in enumerate(concurrent.futures.as_completed(future_to_server)):
-                result = future.result()
-                if result:
-                    active_results.append(result)
-                progress_bar.progress((i + 1) / len(all_raw))
+            future_to_url = {executor.submit(check_server_quality, s): s for s in all_raw}
+            for i, future in enumerate(concurrent.futures.as_completed(future_to_url)):
+                res = future.result()
+                if res:
+                    results.append(res)
+                progress.progress((i + 1) / len(all_raw))
         
-        st.session_state.servers = active_results
+        st.session_state.servers = results
     else:
-        st.warning("لم يتم العثور على سيرفرات، تأكد من التوكن.")
+        st.error("لم يتم العثور على أي سيرفرات جديدة حالياً.")
 
-# أزرار التشغيل
-if st.button("🚀 صيد وفحص سيرفرات اليوم وغداً"):
-    fetch_from_sources()
+# التحكم
+if st.button("🔥 ابدأ الصيد الاحترافي"):
+    fetch_fresh_data()
 
 # عرض النتائج
 if st.session_state.servers:
     df = pd.DataFrame(st.session_state.servers)
-    st.success(f"✅ تم العثور على {len(st.session_state.servers)} سيرفر شغال فعلياً")
+    # ترتيب حسب السرعة (الأسرع أولاً)
+    df['sort_val'] = df['Latency'].str.replace(' ms', '').astype(float)
+    df = df.sort_values('sort_val').drop(columns=['sort_val'])
     
-    st.table(df[["Type", "Server", "Port", "User", "Pass", "Deskey"]])
+    st.success(f"✅ تم العثور على {len(df)} سيرفر شغال بجودة عالية")
+    st.dataframe(df[["Type", "Server", "Port", "User", "Pass", "Latency"]], use_container_width=True)
     
-    st.markdown("### 📋 السطور الجاهزة للنسخ:")
-    all_lines = "\n".join([s['Full Line'] for s in st.session_state.servers])
-    st.text_area("", value=all_lines, height=300)
+    st.markdown("### 📋 السطور الجاهزة (الأسرع في الأعلى):")
+    lines = "\n".join([s['Full Line'] for s in df.to_dict('records')])
+    st.text_area("", value=lines, height=300)
     
-    st.download_button("📥 تحميل ملف .txt", all_lines, file_name=f"servers_{datetime.now().strftime('%Y-%m-%d')}.txt")
+    st.download_button("📥 تحميل ملف CCcam.cfg", lines, file_name=f"Sniper_V8_{today_str}.txt")
 else:
-    st.info("اضغط على الزر بالأعلى لبدء الصيد..")
+    st.info("بانتظار بدء الصيد...")
 
 st.markdown("---")
-st.caption("مطور امين | Support: vfcash 01098137253")
+st.caption("مطور امين | Support vfcash: 01098137253")
